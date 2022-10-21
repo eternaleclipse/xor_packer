@@ -28,6 +28,37 @@ def generate_unpacker_x64(unpacker_addr, code_addr, code_size, xor_key, jmp_addr
     unpacker += b'\xe9' + reljmp.to_bytes(4, byteorder='little', signed=True)
     return unpacker
 
+def generate_unpacker_x86(unpacker_addr, code_addr, code_size, xor_key, jmp_addr):
+    unpacker = b''
+
+    # call to get the current address
+    unpacker += b'\xe8\x00\x00\x00\x00'
+
+    # pop eax
+    unpacker += b'\x58'
+
+    # sub eax, (unpacker_addr - code_addr)
+    # 5 is the size of the call instruction
+    unpacker += b'\x2d' + (unpacker_addr - code_addr + 5).to_bytes(4, 'little', signed=False)
+
+    # mov ecx, size of the code section
+    unpacker += b'\xb9' + code_size.to_bytes(4, byteorder='little', signed=False)
+
+    # xor byte ptr [eax], xor_key
+    unpacker += b'\x80\x30' + xor_key.to_bytes(1, byteorder='little', signed=False)
+
+    # inc eax
+    unpacker += b'\x40'
+
+    # loop to xor the rest of the code section, until ecx == 0
+    unpacker += b'\xe2\xfa'
+
+    # jmp to original entry point
+    jmp_size = 5
+    reljmp = jmp_addr - (unpacker_addr + len(unpacker) + jmp_size)
+    unpacker += b'\xe9' + reljmp.to_bytes(4, byteorder='little', signed=True)
+    return unpacker
+
 def xor_bytes(data, key):
     return bytes([data[i] ^ key for i in range(len(data))])
 
@@ -77,7 +108,15 @@ def pack(path, out_path):
     last_section = pe.sections[-1]
     unpacker_section_vaddr = last_section.VirtualAddress + align(last_section.Misc_VirtualSize, pe.OPTIONAL_HEADER.SectionAlignment)
 
-    unpacker_section_data = generate_unpacker_x64(
+    # Set generate_unpacker to x86 or x64 depending on the architecture
+    if pe.FILE_HEADER.Machine == pefile.MACHINE_TYPE['IMAGE_FILE_MACHINE_I386']:
+        generate_unpacker = generate_unpacker_x86
+    elif pe.FILE_HEADER.Machine == pefile.MACHINE_TYPE['IMAGE_FILE_MACHINE_AMD64']:
+        generate_unpacker = generate_unpacker_x64
+    else:
+        raise Exception('Unsupported architecture')
+
+    unpacker_section_data = generate_unpacker(
         unpacker_addr=unpacker_section_vaddr,
         code_addr=code_section.VirtualAddress,
         code_size=code_section.Misc_VirtualSize,
@@ -118,4 +157,5 @@ def pack(path, out_path):
     print(f'[+] Done, wrote to {out_path}')
 
 if __name__ == '__main__':
-    pack('putty.exe', 'packed.exe')
+    pack('putty_x86.exe', 'packed_x86.exe')
+    # pack('putty_x64.exe', 'packed_x64.exe')
